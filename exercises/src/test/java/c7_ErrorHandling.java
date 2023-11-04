@@ -2,7 +2,10 @@ import org.junit.jupiter.api.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
+import reactor.util.retry.Retry;
+import reactor.util.retry.RetryBackoffSpec;
 
+import java.time.Duration;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -34,7 +37,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   public void houston_we_have_a_problem() {
     AtomicReference<Throwable> errorRef = new AtomicReference<>();
     //todo: do your changes here
-    Flux<String> heartBeat = probeHeartBeatSignal();
+    Flux<String> heartBeat = probeHeartBeatSignal().timeout(Duration.ofSeconds(3)).doOnError(errorRef::set);
 
     StepVerifier.create(heartBeat).expectNextCount(3).expectError(TimeoutException.class).verify();
 
@@ -50,7 +53,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   public void potato_potato() {
     //todo: change this line only
     //use SecurityException
-    Mono<String> currentUser = getCurrentUser();
+    Mono<String> currentUser = getCurrentUser().onErrorMap(SecurityException::new);
 
     StepVerifier.create(currentUser)
         .expectErrorMatches(e -> e instanceof SecurityException && e.getCause()
@@ -66,7 +69,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void under_the_rug() {
     //todo: change this line only
-    Flux<String> messages = messageNode();
+    Flux<String> messages = messageNode().onErrorResume(t -> Mono.empty());
 
     StepVerifier.create(messages).expectNext("0x1", "0x2").verifyComplete();
   }
@@ -78,9 +81,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void have_a_backup() {
     //todo: feel free to change code as you need
-    Flux<String> messages = null;
-    messageNode();
-    backupMessageNode();
+    Flux<String> messages = messageNode().onErrorResume(t -> backupMessageNode());
 
     //don't change below this line
     StepVerifier.create(messages).expectNext("0x1", "0x2", "0x3", "0x4").verifyComplete();
@@ -93,8 +94,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void error_reporter() {
     //todo: feel free to change code as you need
-    Flux<String> messages = messageNode();
-    errorReportService(null);
+    Flux<String> messages = messageNode().onErrorResume(t -> errorReportService(t).then(Mono.error(t)));
 
     //don't change below this line
     StepVerifier.create(messages).expectNext("0x1", "0x2").expectError(RuntimeException.class).verify();
@@ -108,8 +108,9 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
    */
   @Test
   public void unit_of_work() {
-    //todo: do your changes here
-    Flux<Task> taskFlux = taskQueue();
+    Flux<Task> taskFlux = taskQueue()
+        //todo: do your changes here
+        .flatMap(t -> t.execute().then(t.commit()).onErrorResume(t::rollback).thenReturn(t));
 
     StepVerifier.create(taskFlux)
         .expectNextMatches(task -> task.executedExceptionally.get() && !task.executedSuccessfully.get())
@@ -125,7 +126,8 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void billion_dollar_mistake() {
     //todo: change this line only
-    Flux<String> content = getFilesContent().flatMap(Function.identity());
+    Flux<String> content = getFilesContent().flatMap(Function.identity())
+        .onErrorContinue((t, o) -> System.out.printf("%s%n", t));
 
     StepVerifier.create(content).expectNext("file1.txt content", "file3.txt content").verifyComplete();
   }
@@ -145,7 +147,8 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void resilience() {
     //todo: change code as you need
-    Flux<String> content = getFilesContent().flatMap(Function.identity()); //start from here
+    Flux<String> content = getFilesContent().flatMap(
+        file -> file.doOnError(t -> System.out.printf("%s%n", t)).onErrorResume(t -> Mono.empty()));
 
     //don't change below this line
     StepVerifier.create(content).expectNext("file1.txt content", "file3.txt content").verifyComplete();
@@ -158,7 +161,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void its_hot_in_here() {
     //todo: change this line only
-    Mono<Integer> temperature = temperatureSensor();
+    Mono<Integer> temperature = temperatureSensor().retry();
 
     StepVerifier.create(temperature).expectNext(34).verifyComplete();
   }
@@ -171,7 +174,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void back_off() {
     //todo: change this line only
-    Mono<String> connection_result = establishConnection();
+    Mono<String> connection_result = establishConnection().retryWhen(Retry.backoff(3, Duration.ofSeconds(3)));
 
     StepVerifier.create(connection_result).expectNext("connection_established").verifyComplete();
   }
@@ -184,8 +187,7 @@ public class c7_ErrorHandling extends ErrorHandlingBase {
   @Test
   public void good_old_polling() {
     //todo: change code as you need
-    Flux<String> alerts = null;
-    nodeAlerts();
+    Flux<String> alerts = nodeAlerts().repeatWhenEmpty(it -> it.delayElements(Duration.ofSeconds(1))).repeat();
 
     //don't change below this line
     StepVerifier.create(alerts.take(2)).expectNext("node1:low_disk_space", "node1:down").verifyComplete();
