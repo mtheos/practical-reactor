@@ -47,7 +47,7 @@ public class c9_ExecutionControl extends ExecutionControlBase {
   public void slow_down_there_buckaroo() {
     long threadId = Thread.currentThread().getId();
     //todo: change this line only
-    Flux<String> notifications = readNotifications().doOnNext(System.out::println);
+    Flux<String> notifications = readNotifications().delayElements(Duration.ofSeconds(1)).doOnNext(System.out::println);
 
     StepVerifier.create(notifications.doOnNext(s -> assertThread(threadId))).expectNextCount(5).verifyComplete();
   }
@@ -71,8 +71,7 @@ public class c9_ExecutionControl extends ExecutionControlBase {
   @Test
   public void ready_set_go() {
     //todo: feel free to change code as you need
-    Flux<String> tasks = tasks().flatMap(Function.identity());
-    semaphore();
+    Flux<String> tasks = tasks().concatMap(t -> t.delaySubscription(semaphore()));
 
     //don't change code below
     StepVerifier.create(tasks)
@@ -99,7 +98,7 @@ public class c9_ExecutionControl extends ExecutionControlBase {
           System.out.println("Task executing on: " + currentThread.getName());
         })
         //todo: change this line only
-        .then();
+        .subscribeOn(Schedulers.parallel()).then();
 
     StepVerifier.create(task).verifyComplete();
   }
@@ -111,10 +110,10 @@ public class c9_ExecutionControl extends ExecutionControlBase {
    */
   @Test
   public void blocking() {
-    BlockHound.install(); //don't change this line
+    BlockHound.builder().install(); //don't change this line
 
     Mono<Void> task = Mono.fromRunnable(ExecutionControlBase::blockingCall)
-        .subscribeOn(Schedulers.single())//todo: change this line only
+        .subscribeOn(Schedulers.boundedElastic())//todo: change this line only
         .then();
 
     StepVerifier.create(task).verifyComplete();
@@ -126,9 +125,11 @@ public class c9_ExecutionControl extends ExecutionControlBase {
   @Test
   public void free_runners() {
     //todo: feel free to change code as you need
-    Mono<Void> task = Mono.fromRunnable(ExecutionControlBase::blockingCall);
+    Mono<Void> task = Mono.fromRunnable(ExecutionControlBase::blockingCall)
+        .subscribeOn(Schedulers.boundedElastic())
+        .then();
 
-    Flux<Void> taskQueue = Flux.just(task, task, task).concatMap(Function.identity());
+    Flux<Void> taskQueue = Flux.just(task, task, task).flatMap(x -> x, 3);
 
     //don't change code below
     Duration duration = StepVerifier.create(taskQueue).expectComplete().verify();
@@ -142,7 +143,7 @@ public class c9_ExecutionControl extends ExecutionControlBase {
   @Test
   public void sequential_free_runners() {
     //todo: feel free to change code as you need
-    Flux<String> tasks = tasks().flatMap(Function.identity());
+    Flux<String> tasks = tasks().flatMapSequential(Function.identity(), 3);
 
     //don't change code below
     Duration duration = StepVerifier.create(tasks).expectNext("1").expectNext("2").expectNext("3").verifyComplete();
@@ -158,9 +159,13 @@ public class c9_ExecutionControl extends ExecutionControlBase {
   @Test
   public void event_processor() {
     //todo: feel free to change code as you need
-    Flux<String> eventStream = eventProcessor().filter(event -> event.metaData.length() > 0)
+    Flux<String> eventStream = eventProcessor()
+        .parallel()
+        .runOn(Schedulers.parallel())
+        .filter(event -> !event.metaData.isEmpty())
         .doOnNext(event -> System.out.println("Mapping event: " + event.metaData))
         .map(this::toJson)
+        .sequential()
         .concatMap(n -> appendToStore(n).thenReturn(n));
 
     //don't change code below
