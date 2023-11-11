@@ -47,7 +47,8 @@ public class c10_Backpressure extends BackpressureBase {
   public void request_and_demand() {
     CopyOnWriteArrayList<Long> requests = new CopyOnWriteArrayList<>();
     //todo: change this line only
-    Flux<String> messageStream = messageStream1();
+    Flux<String> messageStream = messageStream1()
+        .doOnRequest(requests::add);
 
     StepVerifier.create(messageStream, StepVerifierOptions.create().initialRequest(0))
         .expectSubscription()
@@ -70,7 +71,9 @@ public class c10_Backpressure extends BackpressureBase {
   public void limited_demand() {
     CopyOnWriteArrayList<Long> requests = new CopyOnWriteArrayList<>();
     //todo: do your changes here
-    Flux<String> messageStream = messageStream2();
+    Flux<String> messageStream = messageStream2()
+        .doOnRequest(requests::add)
+        .limitRate(1);
 
     StepVerifier.create(messageStream, StepVerifierOptions.create().initialRequest(0))
         .expectSubscription()
@@ -93,6 +96,10 @@ public class c10_Backpressure extends BackpressureBase {
   public void uuid_generator() {
     Flux<UUID> uuidGenerator = Flux.create(sink -> {
       //todo: do your changes here
+      var requested = sink.requestedFromDownstream();
+      while (requested-- > 0) {
+        sink.next(UUID.randomUUID());
+      }
     });
 
     StepVerifier.create(uuidGenerator.doOnNext(System.out::println)
@@ -112,7 +119,8 @@ public class c10_Backpressure extends BackpressureBase {
   @Test
   public void pressure_is_too_much() {
     //todo: change this line only
-    Flux<String> messageStream = messageStream3();
+    Flux<String> messageStream = messageStream3()
+        .onBackpressureError();
 
     StepVerifier.create(messageStream, StepVerifierOptions.create().initialRequest(0))
         .expectSubscription()
@@ -131,7 +139,8 @@ public class c10_Backpressure extends BackpressureBase {
   @Test
   public void u_wont_brake_me() {
     //todo: change this line only
-    Flux<String> messageStream = messageStream4();
+    Flux<String> messageStream = messageStream4()
+        .onBackpressureBuffer();
 
     StepVerifier.create(messageStream, StepVerifierOptions.create().initialRequest(0))
         .expectSubscription()
@@ -159,19 +168,23 @@ public class c10_Backpressure extends BackpressureBase {
     AtomicInteger count = new AtomicInteger(0);
     AtomicReference<Subscription> sub = new AtomicReference<>();
 
-    remoteMessageProducer().doOnCancel(() -> lockRef.get().countDown()).subscribeWith(new BaseSubscriber<String>() {
+    remoteMessageProducer()
+        .doOnCancel(() -> lockRef.get().countDown())
+        .subscribeWith(new BaseSubscriber<String>() {
       //todo: do your changes only within BaseSubscriber class implementation
       @Override
       protected void hookOnSubscribe(Subscription subscription) {
         sub.set(subscription);
+        subscription.request(10);
       }
 
       @Override
       protected void hookOnNext(String s) {
         System.out.println(s);
-        count.incrementAndGet();
+        if (count.incrementAndGet() == 10) {
+          sub.get().cancel();
+        }
       }
-      //-----------------------------------------------------
     });
 
     lockRef.get().await();
